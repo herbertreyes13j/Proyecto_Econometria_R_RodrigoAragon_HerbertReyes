@@ -1,0 +1,873 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+install.packages("caret")
+install.packages("purrr")
+install.packages("doParallel")
+install.packages("gplots")
+install.packages("heatmap3")
+install.packages("GGally")
+install.packages("glmnet")
+install.packages(c("rstanarm", "loo"))
+```
+```{r}
+session_info <- sessionInfo()
+print(session_info$R.version)
+```
+
+
+## 1. Importar Librerias
+
+```{r}
+library(parallel)
+library(dplyr)
+library(caret)
+library(purrr)
+library(stats)
+library(ggplot2)
+library(heatmap3)
+library(GGally)
+library(doParallel)
+library(rpart)
+library(glmnet)
+```
+
+
+
+
+## 2. Carga, Exploracion y Analisis de Datos
+
+
+### 2.1 Carga de Datos
+```{r}
+data_entreno <- read.csv("C:/Users/Rodrigo Aragon/Desktop/Msc. Data Science/Segundo Ciclo/Econometria en R/Proyecto/train.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+### 2.2 Exploracion y Analisis de Datos
+
+```{r}
+summary(data_entreno)
+```
+La variable de total_bedrooms tiene NAs y la variable ocean_proximity es categorica.
+
+
+Tamaño original del dataset "train.csv": 
+```{r}
+num_filas <- nrow(data_entreno)
+num_columnas <- ncol(data_entreno)
+
+print(paste("Filas:", num_filas, "Columnas:", num_columnas))
+```
+
+Verificando variables numericas:
+```{r}
+is_numeric <- sapply(data_entreno, is.numeric)
+numeric_columns <- names(data_entreno)[is_numeric]
+print(numeric_columns)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### 2.2.1 Analizando NAs
+
+
+Sustitucion de NAs
+
+```{r}
+# Calcular la media de los valores no faltantes
+media_total_bedrooms <- median(data_entreno$total_bedrooms, na.rm = TRUE)
+
+# Reemplazar los valores faltantes con la media
+data_entreno$total_bedrooms[is.na(data_entreno$total_bedrooms)] <- media_total_bedrooms
+```
+
+
+```{r}
+num_filas <- nrow(data_entreno)
+num_columnas <- ncol(data_entreno)
+
+print(paste("Filas:", num_filas, "Columnas:", num_columnas))
+```
+
+Inspeccionando nuevamente el summary:
+```{r}
+summary(data_entreno)
+```
+
+
+
+
+
+#### 2.2.2 Outliers 
+```{r}
+# Calcular el IQR para cada variable numérica
+iqr_values <- apply(data_entreno[, sapply(data_entreno, is.numeric)], 2, IQR)
+
+# Calcular los límites superior e inferior para cada variable
+upper_bounds <- apply(data_entreno[, sapply(data_entreno, is.numeric)], 2, quantile, probs = 0.75) + 1.5 * iqr_values
+lower_bounds <- apply(data_entreno[, sapply(data_entreno, is.numeric)], 2, quantile, probs = 0.25) - 1.5 * iqr_values
+
+# Crear una función para identificar outliers
+is_outlier <- function(x, lower, upper) {
+  return(x < lower | x > upper)
+}
+
+# Identificar outliers en el conjunto de datos data_entreno
+outliers <- apply(data_entreno[, sapply(data_entreno, is.numeric)], 1, function(x) any(is_outlier(x, lower_bounds, upper_bounds)))
+
+# Eliminar outliers del conjunto de datos data_entreno
+data_entreno_no_outliers <- data_entreno[!outliers, ]
+
+# Sobrescribir data_entreno con la versión sin outliers
+data_entreno <- data_entreno_no_outliers
+```
+
+
+```{r}
+num_filas <- nrow(data_entreno)
+num_columnas <- ncol(data_entreno)
+
+print(paste("Filas:", num_filas, "Columnas:", num_columnas))
+```
+
+
+
+
+
+
+#### 2.2.3 Inspeccion de la variable categorica "ocean_proximity"
+
+Valores unicos de la variable:
+```{r}
+valores_unicos <- unique(data_entreno$ocean_proximity)
+print(valores_unicos)
+```
+
+
+```{r}
+sum(is.na(data_entreno$ocean_proximity))
+```
+
+
+
+
+##### 2.2.3.1 One Hot encoding para ocean_proximity:
+```{r}
+data_entreno_one_hot <- model.matrix(~ ocean_proximity - 1, data = data_entreno)
+data_entreno_one_hot <- as.data.frame(data_entreno_one_hot)
+colnames(data_entreno_one_hot) <- gsub("ocean_proximity", "", colnames(data_entreno_one_hot))
+data_entreno <- cbind(data_entreno, data_entreno_one_hot)
+```
+
+
+```{r}
+summary(data_entreno)
+```
+
+
+```{r}
+#Borrar columna
+data_entreno <- data_entreno[, -which(names(data_entreno) == "ocean_proximity")]
+```
+
+
+```{r}
+colnames(data_entreno)[colnames(data_entreno) == "<1H OCEAN"] <- "H_OCEAN"
+colnames(data_entreno)[colnames(data_entreno) == "NEAR BAY"] <- "NEAR_BAY"
+colnames(data_entreno)[colnames(data_entreno) == "NEAR OCEAN"] <- "NEAR_OCEAN"
+```
+
+
+```{r}
+summary(data_entreno)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 2.2.3 Creacion de nuevas variables.
+
+
+```{r}
+data_entreno$population_per_household <- data_entreno$population / data_entreno$households
+data_entreno$rooms_per_household <- data_entreno$total_rooms / data_entreno$households
+data_entreno$bedrooms_per_room <- data_entreno$total_bedrooms / data_entreno$total_rooms
+```
+
+```{r}
+summary(data_entreno)
+```
+
+
+```{r}
+num_filas <- nrow(data_entreno)
+num_columnas <- ncol(data_entreno)
+
+print(paste("Filas:", num_filas, "Columnas:", num_columnas))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 2.2.4 Correlaciones
+
+
+```{r}
+x_variables <- c("longitude", "latitude", "housing_median_age", "total_rooms",
+                 "total_bedrooms", "population", "households", "median_income","H_OCEAN", "INLAND", "ISLAND", "NEAR_BAY","NEAR_OCEAN")
+
+y_variable <- "median_house_value"
+
+
+for (var in x_variables) {
+  print(
+    ggplot(data_entreno, aes_string(x = var, y = y_variable)) +
+      geom_point() +
+      labs(x = var, y = y_variable,
+           title = paste("Scatter plot:", var, "vs", y_variable)) +
+      theme_bw() #gráfico a blanco y negro
+  )
+}
+```
+
+
+```{r}
+correlacion <- cor(data_entreno)
+
+```
+
+```{r}
+correlacion_df <- as.data.frame(correlacion)
+print(correlacion_df)
+```
+
+
+
+Evaluando los graficos de dispersion con relacion a la variable objetivo es posible observar que la unica variable que tiene "un poco" de relacion lineal con la variable objetivo es median_income, eso mismo puede observarse en el dataframe creado anteriormente. Se evaluara posteriormente 
+
+
+
+
+
+
+#### 2.2.4 PCA
+
+
+```{r}
+# Seleccionar las columnas numéricas
+data_num <- data_entreno[, c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income")]
+pca <- prcomp(data_num, scale. = TRUE)
+summary(pca)
+```
+```{r}
+pca$rotation[, 1]
+```
+
+
+
+
+#### 2.2.5 Estandarizacion de Variables 
+
+```{r}
+data_num <- data_entreno[, c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income")]
+data_num_scaled <- scale(data_num)
+data_num_scaled <- as.data.frame(data_num_scaled)
+colnames(data_num_scaled) <- colnames(data_num)
+data_entreno[, c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income")] <- data_num_scaled
+```
+
+
+
+```{r}
+summary(data_entreno)
+```
+
+
+
+
+
+
+## 3. Entrenamiento de Modelos
+
+
+```{r}
+x_variables <- c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income", "H_OCEAN", "INLAND", "ISLAND", "NEAR_BAY","NEAR_OCEAN")
+
+combinaciones <- list()
+for (i in 1:length(x_variables)) {
+  combinaciones_i <- combn(x_variables, i, simplify = FALSE)
+  combinaciones <- c(combinaciones, combinaciones_i)
+}
+
+combinaciones_unicas <- unique(combinaciones)
+print(combinaciones_unicas)
+```
+
+
+
+```{r}
+# Generar combinaciones de 2 o más variables
+combinaciones_dos_o_mas <- list()
+for (i in 2:length(x_variables)) {
+  combinaciones_i <- combn(x_variables, i, simplify = FALSE)
+  combinaciones_dos_o_mas <- c(combinaciones_dos_o_mas, combinaciones_i)
+}
+combinaciones_dos_o_mas_unicas <- unique(combinaciones_dos_o_mas)
+
+print(combinaciones_dos_o_mas_unicas)
+```
+
+
+
+
+### 3.1 Train, Test Split
+
+```{r}
+set.seed(54)
+
+train_indices <- createDataPartition(y = data_entreno$median_house_value, p = 0.8, list = FALSE)
+train_data <- data_entreno[train_indices, ]
+test_data <- data_entreno[-train_indices, ]
+```
+
+```{r}
+nrow_train <- nrow(train_data) 
+nrow_test <- nrow(test_data)  
+nrow_data_entreno <- nrow(data_entreno) 
+
+if (nrow_train + nrow_test == nrow_data_entreno) {
+  print("La división de los datos es correcta.")
+} else {
+  print("La división de los datos es incorrecta.")
+}
+```
+
+
+
+
+
+### 3.2 Linear Regression
+
+```{r}
+registerDoParallel(cores = detectCores())
+
+resultados <- data.frame(
+  Combinacion = character(),
+  R2 = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+
+for (i in 1:length(combinaciones_unicas)) {
+  variables <- combinaciones_unicas[[i]]
+  formula <- paste("median_house_value ~", paste(variables, collapse = " + "))
+  
+  modelo <- lm(formula, data = train_data)
+  predicciones_entreno <- predict(modelo, train_data)
+  
+  predicciones_test <- predict(modelo, test_data)
+  
+ 
+  r2_entreno <- summary(modelo)$adj.r.squared
+  r2_test <- R2(predicciones_test, test_data$median_house_value)
+  
+  rmse_entreno <- sqrt(mean((predicciones_entreno - train_data$median_house_value)^2))
+  rmse_test <- RMSE(predicciones_test, test_data$median_house_value)
+  
+  resultados <- rbind(resultados, data.frame(Combinacion = paste(variables, collapse = ", "),
+                                             R2 = r2_test, RMSE = rmse_test,
+                                             stringsAsFactors = FALSE))
+}
+
+stopCluster(cl)
+
+# Ordenar 
+resultados <- resultados[order(resultados$RMSE), ]
+
+print(resultados)
+```
+
+
+
+
+
+### 3.3 Lasso
+
+```{r}
+
+resultados <- data.frame(
+  Combinacion = character(),
+  R2 = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+
+for (i in 1:length(combinaciones_unicas)) {
+  variables <- combinaciones_unicas[[i]]
+  
+  if (length(variables) < 2) {
+    next
+  }
+  
+  x <- as.matrix(train_data[, variables])
+  y <- train_data$median_house_value
+  
+
+  modelo <- cv.glmnet(x, y, alpha = 1)
+  
+  
+  predicciones_entreno <- predict(modelo, x)
+  predicciones_test <- predict(modelo, as.matrix(test_data[, variables]))
+  
+  r2_entreno <- R2(predicciones_entreno, train_data$median_house_value)
+  r2_test <- R2(predicciones_test, test_data$median_house_value)
+  
+  rmse_entreno <- sqrt(mean((predicciones_entreno - train_data$median_house_value)^2))
+  rmse_test <- RMSE(predicciones_test, test_data$median_house_value)
+  
+  resultados <- rbind(resultados, data.frame(Combinacion = paste(variables, collapse = ", "),
+                                             R2 = r2_test, RMSE = rmse_test,
+                                             stringsAsFactors = FALSE))
+}
+
+resultados <- resultados[order(resultados$RMSE), ]
+
+print(resultados)
+```
+
+
+
+
+
+
+
+### 3.4 Ridge
+
+```{r}
+
+resultados <- data.frame(
+  Combinacion = character(),
+  R2 = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:length(combinaciones_unicas)) {
+  variables <- combinaciones_unicas[[i]]
+  
+  if (length(variables) < 2) {
+    next
+  }
+  e
+  x <- as.matrix(train_data[, variables])
+  y <- train_data$median_house_value
+  
+ 
+  modelo <- cv.glmnet(x, y, alpha = 0)
+  
+  predicciones_entreno <- predict(modelo, x)
+  predicciones_test <- predict(modelo, as.matrix(test_data[, variables]))
+  
+  r2_entreno <- R2(predicciones_entreno, train_data$median_house_value)
+  r2_test <- R2(predicciones_test, test_data$median_house_value)
+  
+  rmse_entreno <- sqrt(mean((predicciones_entreno - train_data$median_house_value)^2))
+  rmse_test <- RMSE(predicciones_test, test_data$median_house_value)
+  
+ 
+  resultados <- rbind(resultados, data.frame(Combinacion = paste(variables, collapse = ", "),
+                                             R2 = r2_test, RMSE = rmse_test,
+                                             stringsAsFactors = FALSE))
+}
+
+
+resultados <- resultados[order(resultados$RMSE), ]
+
+
+print(resultados)
+```
+
+
+
+
+### 3.5 Regresion Polynomial
+
+```{r}
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+resultados <- data.frame(
+  Combinacion = character(),
+  R2 = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:length(combinaciones_unicas)) {
+  variables <- combinaciones_unicas[[i]]
+  formula <- as.formula(paste("median_house_value ~ poly(", paste(variables, collapse = ", "), ", degree = 2)"))
+  
+ 
+  modelo <- train(formula, data = train_data, method = "lm", trControl = trainControl(method = "cv", number = 10))
+  predicciones_test <- predict(modelo, test_data)
+  r2_test <- R2(predicciones_test, test_data$median_house_value)
+  rmse_test <- RMSE(predicciones_test, test_data$median_house_value)
+  resultados <- rbind(resultados, data.frame(Combinacion = paste(variables, collapse = ", "),
+                                             R2 = r2_test, RMSE = rmse_test,
+                                             stringsAsFactors = FALSE))
+}
+
+
+stopCluster(cl)
+
+resultados <- resultados[order(resultados$RMSE), ]
+
+print(resultados)
+```
+
+
+
+
+
+
+
+### 3.6 Random Forest
+
+```{r}
+library(caret)
+library(doParallel)
+
+# Registrar el backend paralelo
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+# Crear el dataframe para almacenar los resultados
+resultados <- data.frame(
+  Combinacion = character(),
+  R2 = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+variables <- c("longitude", "latitude", "housing_median_age", "rooms_per_household", "population_per_household", "median_income", "INLAND", "ISLAND", "NEAR_BAY","NEAR_OCEAN")
+
+#variables <- c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income", "INLAND", "ISLAND", "NEAR_BAY","NEAR_OCEAN")
+
+formula <- as.formula(paste("median_house_value ~", paste(variables, collapse = " + ")))
+  
+modelo <- train(formula, data = train_data, method = "rf", trControl = trainControl(method = "cv", number = 10),
+                tuneGrid = data.frame(mtry = 4), ntree = 800, importance = TRUE)
+
+#modelo <- train(formula, data = train_data, method = "rf",
+                #trControl = trainControl(method = "cv", number = 8, search = "random"),
+                #tuneLength = 200, ntree = 1000, importance = TRUE)
+
+
+predicciones_test <- predict(modelo, test_data)
+  
+  
+r2_test <- R2(predicciones_test, test_data$median_house_value)
+rmse_test <- RMSE(predicciones_test, test_data$median_house_value)
+  
+resultados <- rbind(resultados, data.frame(Combinacion = paste(variables, collapse = ", "),
+                                             R2 = r2_test, RMSE = rmse_test,
+                                             stringsAsFactors = FALSE))
+
+
+stopCluster(cl)
+
+resultados <- resultados[order(resultados$RMSE), ]
+
+print(resultados)
+```
+
+
+
+
+
+### 3.7 Regresion Bayesiana 
+
+No comprendimos como funcionaban los hiperparametros asi que usamos los por defecto. 
+
+```{r}
+library(rstanarm)
+library(loo)
+
+variables <- c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income", "INLAND", "ISLAND", "NEAR_BAY","NEAR_OCEAN")
+formula <- as.formula(paste("median_house_value ~", paste(variables, collapse = " + ")))
+
+cl1 <- makeCluster(detectCores())
+registerDoParallel(cl1)
+
+modelo_bayesiano <- stan_glm(formula, data = train_data, family = gaussian())
+
+summary(modelo_bayesiano)
+
+predicciones <- posterior_predict(modelo_bayesiano, newdata = test_data)
+
+rmse <- sqrt(mean((test_data$median_house_value - predicciones)^2))
+rmse
+
+stopCluster(cl1)
+```
+
+
+
+
+
+
+```{r}
+library(gbm)
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+# Crear el dataframe para almacenar los resultados
+resultados <- data.frame(
+  Combinacion = character(),
+  R2 = numeric(),
+  RMSE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+
+variables <- combinaciones_unicas[[i]]
+  
+  
+# Seleccionar las variables independientes y la variable dependiente
+x <- as.matrix(train_data[, variables])
+y <- train_data$median_house_value
+  
+# Entrenar el modelo de Gradient Boosting
+modelo <- gbm(y ~ ., data = data.frame(x, y),
+                distribution = "gaussian",
+                n.trees = 100,           # Puedes ajustar este número según tus necesidades
+                interaction.depth = 10,   # Puedes ajustar la profundidad del árbol según tus necesidades
+                shrinkage = 0.1,         # Puedes ajustar este valor de aprendizaje según tus necesidades
+                cv.folds = 5)            # Puedes ajustar el número de validaciones cruzadas según tus necesidades
+  
+# Predecir los valores en el conjunto de entrenamiento
+predicciones_entreno <- predict(modelo, data.frame(x), n.trees = 100)
+  
+# Predecir los valores en el conjunto de prueba
+predicciones_test <- predict(modelo, data.frame(as.matrix(test_data[, variables])), n.trees = 100)
+  
+# Calcular el R cuadrado ajustado en el conjunto de entrenamiento
+r2_entreno <- R2(predicciones_entreno, train_data$median_house_value)
+  
+# Calcular el R cuadrado ajustado en el conjunto de prueba
+r2_test <- R2(predicciones_test, test_data$median_house_value)
+
+# Calcular el RMSE en el conjunto de entrenamiento
+rmse_entreno <- sqrt(mean((predicciones_entreno - train_data$median_house_value)^2))
+  
+# Calcular el RMSE en el conjunto de prueba
+rmse_test <- RMSE(predicciones_test, test_data$median_house_value)
+  
+# Agregar los resultados al dataframe
+resultados <- rbind(resultados, data.frame(Combinacion = paste(variables, collapse = ", "),
+                                             R2 = r2_test, RMSE = rmse_test,
+                                             stringsAsFactors = FALSE))
+
+stopCluster(cl)
+
+# Ordenar los resultados por RMSE de forma ascendente
+resultados <- resultados[order(resultados$RMSE), ]
+
+# Imprimir el dataframe de resultados
+print(resultados)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# DATA TEST KAGGLE 
+
+```{r}
+data_kaggle <- read.csv("C:/Users/Rodrigo Aragon/Desktop/Msc. Data Science/Segundo Ciclo/Econometria en R/Proyecto/test.csv")
+summary(data_kaggle)
+```
+Tamaño del dataset:
+```{r}
+num_filas <- nrow(data_kaggle)
+num_columnas <- ncol(data_kaggle)
+
+print(paste("Filas:", num_filas, "Columnas:", num_columnas))
+```
+
+
+```{r}
+
+media_total_bedroomsk <- median(data_kaggle$total_bedrooms, na.rm = TRUE)
+
+
+data_kaggle$total_bedrooms[is.na(data_kaggle$total_bedrooms)] <- media_total_bedroomsk
+```
+
+```{r}
+num_filask <- nrow(data_kaggle)
+num_columnask <- ncol(data_kaggle)
+
+print(paste("Filas:", num_filask, "Columnas:", num_columnask))
+```
+
+
+
+```{r}
+
+data_kaggle_one_hot <- model.matrix(~ ocean_proximity - 1, data = data_kaggle)
+data_kaggle_one_hot <- as.data.frame(data_kaggle_one_hot)
+colnames(data_kaggle_one_hot) <- gsub("ocean_proximity", "", colnames(data_kaggle_one_hot))
+data_kaggle <- cbind(data_kaggle, data_kaggle_one_hot)
+```
+
+```{r}
+summary(data_kaggle)
+```
+
+```{r}
+#Borrar columna
+data_kaggle <- data_kaggle[, -which(names(data_kaggle) == "ocean_proximity")]
+```
+
+```{r}
+summary(data_kaggle)
+```
+
+```{r}
+colnames(data_kaggle)[colnames(data_kaggle) == "<1H OCEAN"] <- "H_OCEAN"
+colnames(data_kaggle)[colnames(data_kaggle) == "NEAR BAY"] <- "NEAR_BAY"
+colnames(data_kaggle)[colnames(data_kaggle) == "NEAR OCEAN"] <- "NEAR_OCEAN"
+```
+
+
+```{r}
+summary(data_kaggle)
+```
+
+
+```{r}
+data_kaggle$population_per_household <- data_kaggle$population / data_kaggle$households
+data_kaggle$rooms_per_household <- data_kaggle$total_rooms / data_kaggle$households
+data_kaggle$bedrooms_per_room <- data_kaggle$total_bedrooms / data_kaggle$total_rooms
+```
+
+
+```{r}
+summary(data_kaggle)
+```
+
+
+
+```{r}
+
+data_numk <- data_kaggle[, c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income")]
+data_num_scaledk <- scale(data_numk)
+data_num_scaledk <- as.data.frame(data_num_scaledk)
+colnames(data_num_scaledk) <- colnames(data_numk)
+data_kaggle[, c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income")] <- data_num_scaledk
+```
+
+```{r}
+summary(data_kaggle)
+```
+
+Modelo a utilizar: Random Forest
+
+```{r}
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+variables <- c("longitude", "latitude", "housing_median_age", "total_rooms", "rooms_per_household", "total_bedrooms", "bedrooms_per_room", "population", "population_per_household", "households", "median_income", "INLAND", "ISLAND", "NEAR_BAY","NEAR_OCEAN")
+formula <- as.formula(paste("median_house_value ~", paste(variables, collapse = " + ")))
+  
+  # Entrenar el modelo de Random Forest con validación cruzada KFold
+#modelo <- train(formula, data = train_data, method = "rf", trControl = trainControl(method = "cv", number = 5),
+                #tuneGrid = data.frame(mtry = 2), ntree = 500, importance = TRUE)
+
+predicciones_kaggle <- predict(modelo, data_kaggle)
+stopCluster(cl)
+
+submission <- data.frame(median_house_value = predicciones_kaggle)
+submission <- data.frame(id = data_kaggle$id, median_house_value = predicciones_kaggle)
+
+write.csv(submission, file = "submission_RodrigoAragon_HerbertReyes_9.csv", row.names = FALSE)
+
+print(predicciones_kaggle)
+```
+
